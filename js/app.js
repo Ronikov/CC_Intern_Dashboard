@@ -1,11 +1,10 @@
-// app.js — bootstraps the dashboard: first-run setup, password lock, tab
-// routing, and top-level event wiring. Everything else lives in render.js /
-// modals.js / store.js / github.js.
+// app.js — bootstraps the dashboard: password lock (backed by the D1-based
+// API), tab routing, and top-level event wiring. Everything else lives in
+// render.js / modals.js / store.js / github.js.
 
-import { store, getConnection, saveConnection, clearConnection, isUnlocked, setUnlocked, lock, sha256Hex } from './store.js';
+import { store, login, isUnlocked, lock } from './store.js';
 import { renderOverview, renderProjects, renderPerson, renderSettings } from './render.js';
 
-const setupScreen = document.getElementById('setup-screen');
 const lockScreen = document.getElementById('lock-screen');
 const appRoot = document.getElementById('app');
 const page = document.getElementById('page');
@@ -15,75 +14,18 @@ const syncStatusEl = document.getElementById('sync-status');
 /* ---------------- boot ---------------- */
 
 async function boot() {
-  const conn = getConnection();
-  if (!conn) {
-    setupScreen.hidden = false;
-    wireSetupForm();
-    return;
-  }
-
-  try {
-    await store.load();
-  } catch (e) {
-    setupScreen.hidden = false;
-    document.getElementById('setup-error').hidden = false;
-    document.getElementById('setup-error').textContent = `Couldn't load data: ${e.message}. Check your details and try again, or reconnect below.`;
-    prefillSetupForm(conn);
-    wireSetupForm();
-    return;
-  }
-
-  if (!store.data.passwordHash) {
-    // first run on this data file: skip the lock, land in the app, nudge toward Settings.
-    setUnlocked();
-    enterApp();
-    return;
-  }
-
   if (isUnlocked()) {
-    enterApp();
-  } else {
-    lockScreen.hidden = false;
-    wireLockForm();
-  }
-}
-
-/* ---------------- first-run setup ---------------- */
-
-function prefillSetupForm(conn) {
-  document.getElementById('setup-owner').value = conn.owner || '';
-  document.getElementById('setup-repo').value = conn.repo || '';
-  document.getElementById('setup-path').value = conn.path || 'dashboard-data.json';
-  document.getElementById('setup-branch').value = conn.branch || 'main';
-}
-
-function wireSetupForm() {
-  const form = document.getElementById('setup-form');
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const conn = {
-      owner: document.getElementById('setup-owner').value.trim(),
-      repo: document.getElementById('setup-repo').value.trim(),
-      path: document.getElementById('setup-path').value.trim() || 'dashboard-data.json',
-      branch: document.getElementById('setup-branch').value.trim() || 'main',
-      token: document.getElementById('setup-token').value.trim(),
-    };
-    saveConnection(conn);
-    const errEl = document.getElementById('setup-error');
-    errEl.hidden = true;
     try {
       await store.load();
-      if (!store.data.passwordHash) {
-        // brand new data file: initialize it so the repo has something committed.
-        await store.save('Initialize Camp Challenge dashboard data');
-      }
-      setupScreen.hidden = true;
-      boot();
-    } catch (err) {
-      errEl.hidden = false;
-      errEl.textContent = `Couldn't connect: ${err.message}`;
+      enterApp();
+      return;
+    } catch (e) {
+      // stale/invalid token (e.g. password changed elsewhere) — fall through to lock screen
+      lock();
     }
-  };
+  }
+  lockScreen.hidden = false;
+  wireLockForm();
 }
 
 /* ---------------- lock screen ---------------- */
@@ -93,15 +35,23 @@ function wireLockForm() {
   form.onsubmit = async (e) => {
     e.preventDefault();
     const val = document.getElementById('lock-password').value;
-    const hash = await sha256Hex(val);
     const errEl = document.getElementById('lock-error');
-    if (hash === store.data.passwordHash) {
-      setUnlocked();
+    errEl.hidden = true;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      const result = await login(val);
+      await store.load();
       lockScreen.hidden = true;
       enterApp();
-    } else {
+      if (result.firstRun) {
+        setTimeout(() => alert('This password is now set as the shared password for everyone. You can change it later in Settings.'), 200);
+      }
+    } catch (err) {
       errEl.hidden = false;
-      errEl.textContent = 'Incorrect password.';
+      errEl.textContent = err.message || 'Incorrect password.';
+    } finally {
+      submitBtn.disabled = false;
     }
   };
 }
@@ -112,7 +62,6 @@ let activeTab = 'overview';
 
 function enterApp() {
   lockScreen.hidden = true;
-  setupScreen.hidden = true;
   appRoot.hidden = false;
 
   renderPeopleTabs();
@@ -181,10 +130,6 @@ function renderActiveTab() {
         await store.save('Update people');
         renderPeopleTabs();
         renderActiveTab();
-      },
-      onDisconnect: () => {
-        clearConnection();
-        location.reload();
       },
     });
   }

@@ -26,25 +26,6 @@
   </div>
 </div>
 
-<!-- ===================== FIRST-RUN SETUP ===================== -->
-<div id="setup-screen" class="lock-screen" hidden>
-  <div class="lock-card setup-card">
-    <div class="logo-plate"><img class="lock-logo" src="assets/camp-challenge-logo.png" alt="Camp Challenge"></div>
-    <h1 class="lock-title">Connect your data repo</h1>
-    <p class="lock-sub">This dashboard stores projects &amp; people inside a GitHub repo (as JSON), so it's shared between everyone. Do this once per device.</p>
-    <form id="setup-form">
-      <label>GitHub owner / org<input type="text" id="setup-owner" placeholder="e.g. zulmarc" required></label>
-      <label>Repo name<input type="text" id="setup-repo" placeholder="e.g. dashboard-data" required></label>
-      <label>File path<input type="text" id="setup-path" value="dashboard-data.json"></label>
-      <label>Branch<input type="text" id="setup-branch" value="main"></label>
-      <label>GitHub Personal Access Token <span class="hint">(the team's one shared token — access to every project repo, not just this one. Ask whoever set it up. Stays only in this browser.)</span>
-        <input type="password" id="setup-token" placeholder="ghp_..." required></label>
-      <button type="submit" class="btn btn-primary">Connect</button>
-    </form>
-    <p class="lock-error" id="setup-error" hidden></p>
-  </div>
-</div>
-
 <!-- ===================== APP SHELL ===================== -->
 <div id="app" class="app" hidden>
   <header class="topbar">
@@ -63,7 +44,7 @@
     </nav>
     <div class="topbar-right">
       <span class="sync-status" id="sync-status">●&nbsp;synced</span>
-      <button class="btn btn-ghost btn-small" id="refresh-btn" title="Reload data from GitHub">↻ Refresh</button>
+      <button class="btn btn-ghost btn-small" id="refresh-btn" title="Reload data">↻ Refresh</button>
       <button class="btn btn-ghost btn-small" id="lock-btn" title="Lock dashboard">🔒</button>
     </div>
   </header>

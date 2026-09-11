@@ -1,4 +1,5 @@
-// modals.js — the "new / edit project" modal.
+// modals.js — the "new / edit project" modal, and the "import repos from
+// GitHub" modal used by the Projects tab's "Sync from GitHub" button.
 
 import { store } from './store.js';
 
@@ -105,6 +106,85 @@ export function openProjectModal(projectId) {
       alert(`Couldn't save to GitHub: ${e.message}`);
       saveBtn.disabled = false;
       saveBtn.textContent = existing ? 'Save changes' : 'Create project';
+    }
+  });
+}
+
+function humanize(repoName) {
+  return repoName
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// repos: [{ name, fullName, htmlUrl, description, updatedAt, archived }]
+export function openImportReposModal(repos, org) {
+  const root = document.getElementById('modal-root');
+  const selected = new Set(repos.map((r) => r.htmlUrl));
+
+  root.innerHTML = `
+    <div class="modal-backdrop" id="modal-backdrop">
+      <div class="modal">
+        <h2>Import from GitHub</h2>
+        <p class="settings-note">Found ${repos.length} repo${repos.length === 1 ? '' : 's'} under <b>${esc(org)}</b> not yet tracked as a project. Pick which to add:</p>
+        <div style="display:flex; flex-direction:column; gap:8px; margin-top:12px; max-height:40vh; overflow-y:auto;">
+          ${repos.map((r) => `
+            <label class="check-pill on" style="justify-content:space-between; width:100%; cursor:pointer;" data-url="${esc(r.htmlUrl)}">
+              <span><b>${esc(r.name)}</b>${r.description ? ` — ${esc(r.description)}` : ''}</span>
+              <input type="checkbox" class="repo-checkbox" checked data-url="${esc(r.htmlUrl)}">
+            </label>`).join('')}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="f-cancel">Cancel</button>
+          <button class="btn btn-primary" id="f-import">Import selected</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  root.querySelectorAll('.repo-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const url = cb.dataset.url;
+      if (cb.checked) selected.add(url);
+      else selected.delete(url);
+      cb.closest('.check-pill').classList.toggle('on', cb.checked);
+    });
+  });
+
+  root.querySelector('#modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-backdrop') closeModal();
+  });
+  root.querySelector('#f-cancel').addEventListener('click', closeModal);
+
+  root.querySelector('#f-import').addEventListener('click', async () => {
+    const toImport = repos.filter((r) => selected.has(r.htmlUrl));
+    if (!toImport.length) { closeModal(); return; }
+
+    const btn = root.querySelector('#f-import');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+
+    toImport.forEach((r) => {
+      store.data.projects.push({
+        id: store.nextId('proj'),
+        name: humanize(r.name),
+        description: r.description || '',
+        repoUrl: r.htmlUrl,
+        category: '',
+        status: 'planning',
+        assignees: [],
+        start: '',
+        end: '',
+      });
+    });
+
+    try {
+      await store.save(`Import ${toImport.length} project(s) from GitHub`);
+      closeModal();
+      window.dispatchEvent(new CustomEvent('dashboard:changed'));
+    } catch (e) {
+      alert(`Couldn't save: ${e.message}`);
+      btn.disabled = false;
+      btn.textContent = 'Import selected';
     }
   });
 }

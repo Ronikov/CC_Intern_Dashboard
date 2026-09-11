@@ -2,9 +2,9 @@
 // delegation; no framework, no build step, so this deploys as-is to
 // Cloudflare Pages.
 
-import { store, colorVar, PALETTE, getConnection, saveConnection, sha256Hex } from './store.js';
-import { parseRepoUrl, fetchIssues, fetchMilestones, fetchReleases } from './github.js';
-import { openProjectModal } from './modals.js';
+import { store, colorVar, PALETTE, updatePassword, getGithubOrg, setGithubOrg } from './store.js';
+import { parseRepoUrl, fetchIssues, fetchMilestones, fetchReleases, fetchOrgRepos } from './github.js';
+import { openProjectModal, openImportReposModal } from './modals.js';
 
 const repoCache = new Map(); // "owner/repo" -> { issues, milestones, releases, fetchedAt }
 
@@ -147,10 +147,13 @@ export function renderProjects(el) {
   el.innerHTML = `
     <div class="section-head">
       <div><h2>Projects</h2><p class="sub">Create a project and assign who's driving it.</p></div>
-      <button class="btn btn-primary" id="new-project-btn">+ New project</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" id="sync-github-btn">↻ Sync from GitHub</button>
+        <button class="btn btn-primary" id="new-project-btn">+ New project</button>
+      </div>
     </div>
     <div class="project-grid">
-      ${projects.map((p) => renderProjectCard(p, people)).join('') || `<p class="empty-state">No projects yet. Click “New project” to add the first one.</p>`}
+      ${projects.map((p) => renderProjectCard(p, people)).join('') || `<p class="empty-state">No projects yet. Click “New project” to add the first one, or “Sync from GitHub” to pull in existing repos.</p>`}
     </div>
   `;
 
@@ -158,6 +161,42 @@ export function renderProjects(el) {
   el.querySelectorAll('.project-card').forEach((card) => {
     card.addEventListener('click', () => openProjectModal(card.dataset.id));
   });
+  el.querySelector('#sync-github-btn').addEventListener('click', (e) => syncFromGithub(e.currentTarget));
+}
+
+async function syncFromGithub(btn) {
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  try {
+    let org = await getGithubOrg();
+    if (!org) {
+      const typed = prompt('Which GitHub org or username should we scan for repos? (You can change this later in Settings.)');
+      if (!typed || !typed.trim()) return;
+      org = typed.trim();
+      await setGithubOrg(org);
+    }
+
+    const repos = await fetchOrgRepos(org);
+    const existing = new Set(
+      store.getProjects()
+        .map((p) => parseRepoUrl(p.repoUrl))
+        .filter(Boolean)
+        .map((r) => `${r.owner}/${r.repo}`.toLowerCase())
+    );
+    const newRepos = repos.filter((r) => !r.archived && !existing.has(r.fullName.toLowerCase()));
+
+    if (!newRepos.length) {
+      alert(`No new repos found under "${org}" — everything's already tracked (or archived).`);
+      return;
+    }
+    openImportReposModal(newRepos, org);
+  } catch (err) {
+    alert(`Couldn't sync from GitHub: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
 }
 
 function renderProjectCard(p, people) {
@@ -269,12 +308,10 @@ async function getRepoBundle(parsed) {
   const cached = repoCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < 60000) return cached;
 
-  const conn = getConnection();
-  const token = conn?.token;
   const [issues, milestones, releases] = await Promise.all([
-    fetchIssues(parsed, token, 'all').catch(() => []),
-    fetchMilestones(parsed, token, 'open').catch(() => []),
-    fetchReleases(parsed, token).catch(() => []),
+    fetchIssues(parsed, null, 'all').catch(() => []),
+    fetchMilestones(parsed, null, 'open').catch(() => []),
+    fetchReleases(parsed).catch(() => []),
   ]);
   const bundle = { issues, milestones, releases, fetchedAt: Date.now() };
   repoCache.set(key, bundle);
@@ -391,8 +428,7 @@ function renderLaunch(container, releases) {
 /* SETTINGS TAB                                                          */
 /* ==================================================================== */
 
-export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
-  const conn = getConnection();
+export function renderSettings(el, { onPeopleChanged }) {
   const people = store.getPeople();
 
   el.innerHTML = `
@@ -421,12 +457,14 @@ export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
       </div>
 
       <div class="settings-card">
-        <h3>Data connection</h3>
-        <p class="settings-note">Projects &amp; people live in <b>${esc(conn?.owner)}/${esc(conn?.repo)}</b> at <code>${esc(conn?.path)}</code> (branch <code>${esc(conn?.branch)}</code>).</p>
-        <p class="settings-note">This token is shared by the whole team — one token, used on every device, with access to every project repo (not just the data repo). Whoever manages the GitHub org should generate it; everyone pastes the <em>same</em> token when connecting.</p>
-        <div class="field-row"><input type="password" id="token-input" placeholder="Update shared GitHub token" value=""></div>
-        <button class="btn btn-small" id="save-token-btn">Save token</button>
-        <button class="btn btn-small btn-danger" id="disconnect-btn" style="margin-left:8px;">Disconnect this device</button>
+        <h3>Data &amp; GitHub access</h3>
+        <p class="settings-note">People &amp; projects are stored in a Cloudflare D1 database — no per-device setup needed. Live Kanban/bugs/roadmap/releases are fetched through the dashboard's own server, which holds one GitHub token centrally. No GitHub credential ever needs to be entered on this page.</p>
+        <label style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);margin:14px 0 6px;">GitHub org/username to sync repos from</label>
+        <div class="field-row">
+          <input type="text" id="github-org-input" placeholder="loading…">
+          <button class="btn btn-small" id="save-org-btn">Save</button>
+        </div>
+        <p class="settings-note">Used by the “↻ Sync from GitHub” button on the Projects tab to find repos that aren't tracked yet.</p>
       </div>
 
       <div class="settings-card">
@@ -479,25 +517,27 @@ export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
     });
   });
 
-  el.querySelector('#save-token-btn').addEventListener('click', () => {
-    const token = el.querySelector('#token-input').value.trim();
-    if (!token) return;
-    const c = getConnection();
-    c.token = token;
-    saveConnection(c);
-    alert('Token updated for this device.');
-  });
-
-  el.querySelector('#disconnect-btn').addEventListener('click', () => {
-    if (!confirm('Disconnect this device from the data repo? You can reconnect anytime with the same details.')) return;
-    onDisconnect();
+  const orgInput = el.querySelector('#github-org-input');
+  getGithubOrg().then((org) => { orgInput.value = org || ''; orgInput.placeholder = 'e.g. zulmarc'; }).catch(() => { orgInput.placeholder = 'e.g. zulmarc'; });
+  el.querySelector('#save-org-btn').addEventListener('click', async () => {
+    try {
+      await setGithubOrg(orgInput.value.trim());
+      alert('Saved.');
+    } catch (e) {
+      alert(`Couldn't save: ${e.message}`);
+    }
   });
 
   el.querySelector('#save-password-btn').addEventListener('click', async () => {
-    const val = el.querySelector('#new-password').value;
+    const input = el.querySelector('#new-password');
+    const val = input.value;
     if (!val) return;
-    store.data.passwordHash = await sha256Hex(val);
-    await store.save('Update shared password');
-    alert('Password updated.');
+    try {
+      await updatePassword(val);
+      input.value = '';
+      alert('Password updated. Everyone will need the new password next time they unlock the dashboard.');
+    } catch (e) {
+      alert(`Couldn't update password: ${e.message}`);
+    }
   });
 }

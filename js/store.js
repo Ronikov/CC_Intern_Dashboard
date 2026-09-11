@@ -1,81 +1,82 @@
-// store.js — local connection config, remote data (people/projects) state,
-// and small persistence/sync helpers. GitHub is the source of truth for
-// people/projects; the connection itself (which repo, and the PAT) lives only
-// in this browser's localStorage.
+// store.js — talks to our own Pages Functions API (backed by Cloudflare D1)
+// for people/projects, and holds the in-memory app state. No GitHub token
+// ever touches this file or the browser anymore; that lives server-side.
 
-import { fetchDataFile, saveDataFile } from './github.js';
-
-const CONN_KEY = 'cc_dashboard_conn_v1';
-const UNLOCK_KEY = 'cc_dashboard_unlocked_v1';
+const TOKEN_KEY = 'cc_dashboard_token_v2';
 
 export const PALETTE = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'];
 
 export function colorVar(key) {
   return `var(--${key})`;
 }
-export function colorSoftVar(key) {
-  return `var(--${key}-soft)`;
+
+/* ---------------- session token (from /api/login) ---------------- */
+
+export function getToken() {
+  return sessionStorage.getItem(TOKEN_KEY);
 }
-
-/* ---------------- connection (local, per-device) ---------------- */
-
-export function getConnection() {
-  try {
-    const raw = localStorage.getItem(CONN_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+export function setToken(token) {
+  sessionStorage.setItem(TOKEN_KEY, token);
 }
-
-export function saveConnection(conn) {
-  localStorage.setItem(CONN_KEY, JSON.stringify(conn));
-}
-
-export function clearConnection() {
-  localStorage.removeItem(CONN_KEY);
-  localStorage.removeItem(UNLOCK_KEY);
-}
-
-/* ---------------- unlock (session, per-device) ---------------- */
-
 export function isUnlocked() {
-  return sessionStorage.getItem(UNLOCK_KEY) === '1';
-}
-export function setUnlocked() {
-  sessionStorage.setItem(UNLOCK_KEY, '1');
+  return !!getToken();
 }
 export function lock() {
-  sessionStorage.removeItem(UNLOCK_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
-/* ---------------- password hashing ---------------- */
-
-export async function sha256Hex(text) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+function authHeaders() {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-/* ---------------- default data shape ---------------- */
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...authHeaders(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
 
-function defaultData() {
-  return {
-    version: 1,
-    passwordHash: null, // set on first run
-    people: [
-      { id: 'zul', name: 'Zul', githubUsername: '', color: 'p1' },
-      { id: 'marc', name: 'Marc', githubUsername: '', color: 'p2' },
-    ],
-    projects: [],
-  };
+export async function login(password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Incorrect password.');
+  setToken(data.token);
+  return data;
+}
+
+export async function updatePassword(newPassword) {
+  const data = await apiFetch('/api/password', { method: 'PUT', body: JSON.stringify({ newPassword }) });
+  setToken(data.token);
+}
+
+export async function getGithubOrg() {
+  const data = await apiFetch('/api/org');
+  return data.githubOrg;
+}
+
+export async function setGithubOrg(githubOrg) {
+  const data = await apiFetch('/api/org', { method: 'PUT', body: JSON.stringify({ githubOrg }) });
+  return data.githubOrg;
 }
 
 /* ---------------- central store ---------------- */
 
 class Store {
   constructor() {
-    this.data = null;
-    this.sha = null;
+    this.data = null; // { people, projects }
     this.listeners = new Set();
     this.status = 'idle'; // idle | syncing | synced | error
     this.statusMsg = '';
@@ -97,13 +98,9 @@ class Store {
   }
 
   async load() {
-    const conn = getConnection();
-    if (!conn) throw new Error('no-connection');
     this.setStatus('syncing');
     try {
-      const { sha, data } = await fetchDataFile(conn);
-      this.sha = sha;
-      this.data = data || defaultData();
+      this.data = await apiFetch('/api/state');
       this.setStatus('synced');
     } catch (e) {
       this.setStatus('error', e.message);
@@ -113,12 +110,9 @@ class Store {
   }
 
   async save(message) {
-    const conn = getConnection();
-    if (!conn) throw new Error('no-connection');
     this.setStatus('syncing');
     try {
-      const sha = await saveDataFile(conn, this.data, this.sha, message);
-      this.sha = sha;
+      await apiFetch('/api/state', { method: 'PUT', body: JSON.stringify(this.data) });
       this.setStatus('synced');
     } catch (e) {
       this.setStatus('error', e.message);

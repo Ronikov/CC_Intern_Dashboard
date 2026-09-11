@@ -1,104 +1,95 @@
 # Camp Challenge — Project Overview Dashboard
 
-A static dashboard for tracking Zul & Marc's projects: a combined timeline, a
-projects tab for creating/assigning work, individual boards per person, and
-live Kanban / bug tracker / roadmap / product-launch views pulled straight
-from each project's GitHub repo.
+A dashboard for tracking Zul & Marc's projects: a combined timeline, a
+projects tab for creating/assigning work (with a "Sync from GitHub" button
+to pull in repos automatically), individual boards per person, and live
+Kanban / bug tracker / roadmap / product-launch views pulled straight from
+each project's GitHub repo.
 
-No backend, no build step — it's plain HTML/CSS/JS, so it deploys to
-Cloudflare Pages as-is. **GitHub is the database**: people and projects are
-stored as a JSON file in a repo, edited through the GitHub API. **People are
-real GitHub accounts** — give each person their GitHub username in Settings
-and their real avatar shows up everywhere, and issues assigned to them on
-GitHub get flagged on the Kanban board.
+**Architecture**: a static frontend (plain HTML/CSS/JS, no build step) on
+Cloudflare Pages, backed by a few Cloudflare Pages Functions (`functions/`)
+and a Cloudflare D1 database. GitHub itself is only ever called **server
+side** — the one GitHub token lives in a Cloudflare secret, never in a
+browser. People are real GitHub accounts: give each person their GitHub
+username in Settings and their real avatar shows up everywhere, and issues
+assigned to them on GitHub get flagged on the Kanban board.
 
-## 1. Where the data lives
+## How it fits together
 
-You can reuse this same repo (`CC_Intern_Dashboard`) to hold the data file —
-no need to create a second one. The app will create `dashboard-data.json` in
-it the first time someone connects.
+- `index.html` / `css/` / `js/` — the dashboard UI.
+- `functions/api/*.js` — small serverless endpoints (Cloudflare Pages
+  Functions) that read/write D1 and proxy GitHub's API.
+- `schema.sql` — the D1 table definitions (people, projects, assignments,
+  and a small key/value `settings` table for the password hash + the
+  GitHub org to sync from).
+- `wrangler.toml` — binds the D1 database to the Pages Functions.
 
-## 2. Create the one shared GitHub token
+Nothing about people/projects/password ever needs a GitHub token in the
+browser — that only happens for the *content* proxy (`/api/github`), which
+runs entirely server-side.
 
-The whole team uses **one token**, generated once by whoever administers the
-GitHub org/account. It needs access to *every* repo that's tracked as a
-project (not just the data repo), since it's also used to read each
-project's issues/milestones/releases for the Kanban, bug tracker, roadmap,
-and product-launch views.
-
-1. GitHub → Settings → Developer settings → **Fine-grained personal access tokens** → Generate new token.
-2. Resource owner: your account or org.
-3. Repository access: **All repositories** (simplest — new projects just work), or "Only select repositories" and add each project repo + the data repo as you create them.
-4. Permissions → Repository permissions → **Contents: Read and write** (write is only strictly needed on the data repo, but "all repos" access is easiest to manage as one grant).
-5. Generate, copy the token (starts with `github_pat_...`).
-6. Share this one token with Marc (and anyone else) out of band — e.g. a password manager — so everyone pastes the *same* token when they connect their device.
-
-The token is only ever stored in each browser's `localStorage` — it is never
-committed anywhere or sent to any server besides `api.github.com`.
-
-## 3. Adding people
-
-In **Settings → People**, add each person's name and their **real GitHub
-username**. That unlocks:
-- their actual GitHub avatar throughout the dashboard (falls back to colored initials if left blank or the image fails to load)
-- a small avatar badge on Kanban cards showing who a GitHub issue is actually assigned to
-
-## 4. Run it locally
-
-Any static file server works, e.g.:
+## One-time setup for a fresh deploy
 
 ```bash
-npx serve .
-```
+# 1. Create the D1 database
+npx wrangler d1 create cc-intern-dashboard-db
+# copy the printed database_id into wrangler.toml's [[d1_databases]] block
 
-Open it, and the **Connect your data repo** screen appears — fill in the
-owner/repo/path/branch from step 1 and paste the shared token.
+# 2. Apply the schema
+npx wrangler d1 execute cc-intern-dashboard-db --remote --file=schema.sql
 
-The first person to connect will be asked to set a shared password in
-Settings afterwards (skip the lock screen until you set one).
+# 3. Create the Pages project (first time only)
+npx wrangler pages project create cc-intern-dashboard --production-branch=main
 
-## 5. Deploy to Cloudflare Pages
+# 4. Set the server-side GitHub token (fine-grained PAT, Contents: Read
+#    access to every repo you'll track as a project — read-only is enough,
+#    the proxy never writes to GitHub)
+npx wrangler pages secret put GITHUB_TOKEN --project-name cc-intern-dashboard
 
-**Option A — dashboard (no CLI):**
-1. Go to the Cloudflare dashboard → Workers & Pages → Create → Pages → Upload assets.
-2. Upload this whole folder (`index.html`, `css/`, `js/`, `assets/`).
-3. Deploy. Share the resulting `*.pages.dev` URL with Marc.
-
-**Option B — Wrangler CLI:**
-```bash
+# 5. Deploy
 npx wrangler pages deploy . --project-name cc-intern-dashboard
 ```
 
-**Option C — auto-deploy on push:** connect the Cloudflare Pages project to
-this GitHub repo (Project → Settings → Build → Connect to Git → pick
-`Ronikov/CC_Intern_Dashboard`, branch `main`, no build command, output
-directory `/`). Every `git push` then deploys automatically.
+For auto-deploy on every `git push`, connect the Pages project to this repo
+under Project → Settings → Build → Connect to Git (branch `main`, no build
+command, output directory `/`).
 
-Every teammate opens the URL, connects once with the shared token (step 4),
-and unlocks with the shared password.
+## Using it
+
+- First person to open the URL sets the shared password right there on the
+  lock screen — whatever they type becomes the password for everyone.
+- **Settings → People**: add each person's name and real GitHub username.
+- **Settings → GitHub org/username to sync repos from**: the account the
+  Projects tab's "↻ Sync from GitHub" button scans.
+- **Projects → ↻ Sync from GitHub**: lists repos under that org/account not
+  already tracked as a project, and lets you import any of them in one
+  click (name/description pulled from GitHub; edit anything afterward).
+- To power a project's Kanban/bugs/roadmap, just use real labels (`bug`,
+  `todo`, `in progress`) and milestones/releases on its GitHub repo — the
+  dashboard reads them live, nothing to configure beyond the repo URL.
 
 ## How data flows
 
-- **People & projects** — stored in `dashboard-data.json`. Every
-  create/edit/delete in the UI commits straight to that file via the GitHub
-  Contents API.
-- **Kanban** — derived from each project repo's open/closed issues, grouped
-  by the labels `todo`, `in progress` / `in-progress` (anything else open is
-  "Backlog"; closed issues are "Done"). Cards show the real GitHub avatar(s)
-  of whoever the issue is assigned to.
+- **People & projects** — stored in D1 (`people`, `projects`,
+  `project_assignees` tables), read/written through `/api/state`.
+- **Password** — a sha256 hash lives in D1's `settings` table, never sent to
+  the browser; `/api/login` checks it server-side and returns a bearer token
+  used for subsequent requests. This is a convenience lock, not real
+  security — don't put anything sensitive behind it.
+- **Kanban** — derived from a project repo's open/closed issues via
+  `/api/github`, grouped by the labels `todo`, `in progress` /
+  `in-progress` (anything else open is "Backlog"; closed issues are
+  "Done"). Cards show the real GitHub avatar(s) of whoever the issue is
+  assigned to.
 - **Bug tracker** — issues labeled `bug`.
 - **Roadmap** — open milestones, with a progress bar from closed/open issue counts.
 - **Product launch** — GitHub Releases.
 
-To power Kanban/bugs/roadmap for a project, just give it real labels (`bug`,
-`todo`, `in progress`) and milestones/releases on GitHub — the dashboard
-reads them live, nothing to configure per-project beyond the repo URL.
+## Local development
 
-## Security notes
+```bash
+npx wrangler d1 execute cc-intern-dashboard-db --local --file=schema.sql
+npx wrangler pages dev .
+```
 
-- The password gate is a convenience lock, not real security — the hash is
-  stored in the (likely private) data repo and checked client-side. Don't
-  put anything sensitive behind it.
-- Because one token now has broad access across every project repo, treat it
-  like a shared secret: don't paste it anywhere but the Settings/setup
-  screen, and rotate it if a device with it is lost.
+(`wrangler pages dev` reads the D1 binding from `wrangler.toml` automatically.)
