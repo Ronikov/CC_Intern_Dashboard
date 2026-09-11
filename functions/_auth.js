@@ -30,6 +30,14 @@ export function json(data, init = {}) {
   });
 }
 
+// The GitHub token used by /api/github: a D1-stored token (settable from
+// Settings, no CLI needed) takes priority; env.GITHUB_TOKEN (a Wrangler
+// secret) is the fallback for anyone who prefers to set it that way.
+export async function getGithubToken(env) {
+  const stored = await getSetting(env.DB, 'githubToken');
+  return stored || env.GITHUB_TOKEN || null;
+}
+
 // Returns the verified token string, or null if missing/invalid/no password set yet.
 export async function requireAuth(request, env) {
   const auth = request.headers.get('Authorization') || '';

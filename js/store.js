@@ -62,6 +62,14 @@ export async function updatePassword(newPassword) {
   setToken(data.token);
 }
 
+export async function getGithubTokenStatus() {
+  return apiFetch('/api/github-token'); // { isSet, hint }
+}
+
+export async function setGithubToken(token) {
+  return apiFetch('/api/github-token', { method: 'PUT', body: JSON.stringify({ token }) });
+}
+
 export async function getGithubOrg() {
   const data = await apiFetch('/api/org');
   return data.githubOrg;

@@ -2,7 +2,7 @@
 // delegation; no framework, no build step, so this deploys as-is to
 // Cloudflare Pages.
 
-import { store, colorVar, PALETTE, updatePassword, getGithubOrg, setGithubOrg } from './store.js';
+import { store, colorVar, PALETTE, updatePassword, getGithubOrg, setGithubOrg, getGithubTokenStatus, setGithubToken } from './store.js';
 import { parseRepoUrl, fetchIssues, fetchMilestones, fetchReleases, fetchOrgRepos } from './github.js';
 import { openProjectModal, openImportReposModal } from './modals.js';
 
@@ -458,8 +458,17 @@ export function renderSettings(el, { onPeopleChanged }) {
 
       <div class="settings-card">
         <h3>Data &amp; GitHub access</h3>
-        <p class="settings-note">People &amp; projects are stored in a Cloudflare D1 database — no per-device setup needed. Live Kanban/bugs/roadmap/releases are fetched through the dashboard's own server, which holds one GitHub token centrally. No GitHub credential ever needs to be entered on this page.</p>
-        <label style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);margin:14px 0 6px;">GitHub org/username to sync repos from</label>
+        <p class="settings-note">People &amp; projects are stored in a Cloudflare D1 database — no per-device setup needed. Live Kanban/bugs/roadmap/releases are fetched through the dashboard's own server, which holds one GitHub token centrally — set it once here and it works for everyone, on every device.</p>
+
+        <label style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);margin:14px 0 6px;">Shared GitHub token</label>
+        <p class="settings-note" id="github-token-status">Checking…</p>
+        <div class="field-row">
+          <input type="password" id="github-token-input" placeholder="github_pat_… or ghp_…">
+          <button class="btn btn-small" id="save-token-btn">Save</button>
+        </div>
+        <p class="settings-note">Fine-grained PAT with <b>Contents: Read</b> access to every project repo. Stored in the database, never sent to any browser after this.</p>
+
+        <label style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);margin:18px 0 6px;">GitHub org/username to sync repos from</label>
         <div class="field-row">
           <input type="text" id="github-org-input" placeholder="loading…">
           <button class="btn btn-small" id="save-org-btn">Save</button>
@@ -515,6 +524,24 @@ export function renderSettings(el, { onPeopleChanged }) {
       person.color = e.target.dataset.color;
       await onPeopleChanged();
     });
+  });
+
+  const tokenStatusEl = el.querySelector('#github-token-status');
+  getGithubTokenStatus()
+    .then(({ isSet, hint }) => { tokenStatusEl.textContent = isSet ? `A token is set (ends in ${hint}).` : 'No token set yet — Kanban/bugs/roadmap/releases and Sync from GitHub won\'t work until one is added.'; })
+    .catch(() => { tokenStatusEl.textContent = 'Could not check token status.'; });
+  el.querySelector('#save-token-btn').addEventListener('click', async () => {
+    const input = el.querySelector('#github-token-input');
+    const val = input.value.trim();
+    if (!val) return;
+    try {
+      const { hint } = await setGithubToken(val);
+      input.value = '';
+      tokenStatusEl.textContent = `A token is set (ends in ${hint}).`;
+      alert('GitHub token saved.');
+    } catch (e) {
+      alert(`Couldn't save token: ${e.message}`);
+    }
   });
 
   const orgInput = el.querySelector('#github-org-input');
