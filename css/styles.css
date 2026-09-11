@@ -450,8 +450,12 @@ input,select,textarea{ font-family:inherit; }
 }
 .kanban-card a{ color:var(--ink); text-decoration:none; font-weight:600; }
 .kanban-card a:hover{ color:var(--accent); }
+.kanban-card .kc-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:6px; }
 .kanban-card .labels{ display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; }
 .kanban-card .lbl{ font-size:9.5px; padding:2px 6px; border-radius:20px; font-family:'IBM Plex Mono',monospace; }
+.mini-avatars{ display:flex; flex:none; }
+.mini-avatar{ width:18px; height:18px; border-radius:50%; border:2px solid var(--surface); margin-left:-7px; object-fit:cover; }
+.mini-avatar:first-child{ margin-left:0; }
 
 /* list rows (bugs, releases, milestones) */
 .list-row{
@@ -478,12 +482,17 @@ input,select,textarea{ font-family:inherit; }
 }
 .settings-card h3{ font-family:'Baloo 2',sans-serif; font-size:16px; margin-bottom:12px; }
 .people-list{ display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
-.person-row{ display:flex; align-items:center; gap:10px; padding:8px; border:1px solid var(--border); border-radius:8px; }
-.person-row .name{ flex:1; font-weight:600; font-size:13.5px; }
+.person-row{ display:flex; align-items:center; gap:10px; padding:8px; border:1px solid var(--border); border-radius:8px; flex-wrap:wrap; }
+.person-row .name{ flex:1 1 auto; font-weight:600; font-size:13.5px; min-width:50px; }
+.person-row .github-username-input{
+  width:130px; padding:6px 9px; border-radius:7px; border:1px solid var(--border-strong);
+  background:var(--bg); color:var(--ink-soft); font-size:12px; font-family:'IBM Plex Mono',monospace;
+}
 .swatches{ display:flex; gap:6px; }
 .swatch{ width:20px; height:20px; border-radius:50%; cursor:pointer; border:2px solid transparent; }
 .swatch.selected{ border-color:var(--ink); }
-.field-row{ display:flex; gap:8px; margin-bottom:10px; }
+.field-row{ display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+.field-row input{ min-width:120px; }
 .field-row input, .field-row select{
   flex:1; padding:8px 10px; border-radius:7px; border:1px solid var(--border-strong);
   background:var(--bg); color:var(--ink); font-size:13px;

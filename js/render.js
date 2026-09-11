@@ -16,9 +16,24 @@ function initials(name) {
   return (name || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 }
 
+function avatarFallbackHtml(person, style) {
+  return `<div class="avatar" style="background:${colorVar(person.color)};${style}" title="${esc(person.name)}">${esc(initials(person.name))}</div>`;
+}
+
+function jsStringEscape(html) {
+  return html.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+// Real GitHub avatar when the person has a username on file; falls back to
+// their initials on a colored circle (also used if the GitHub image 404s).
 function avatar(person, size) {
   const style = size ? `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.4)}px;` : '';
-  return `<div class="avatar" style="background:${colorVar(person.color)};${style}" title="${esc(person.name)}">${esc(initials(person.name))}</div>`;
+  if (person.githubUsername) {
+    const url = `https://github.com/${encodeURIComponent(person.githubUsername)}.png?size=128`;
+    const fallback = jsStringEscape(avatarFallbackHtml(person, style));
+    return `<img class="avatar" src="${url}" alt="${esc(person.name)}" title="${esc(person.name)} (@${esc(person.githubUsername)})" style="${style}object-fit:cover;" onerror='this.outerHTML="${fallback}"'>`;
+  }
+  return avatarFallbackHtml(person, style);
 }
 
 function statusBadge(status) {
@@ -308,9 +323,13 @@ function renderKanban(container, issues) {
 }
 
 function kanbanCard(issue) {
+  const assignees = issue.assignees?.length ? issue.assignees : (issue.assignee ? [issue.assignee] : []);
   return `
     <div class="kanban-card">
-      <a href="${esc(issue.html_url)}" target="_blank" rel="noopener">#${issue.number} ${esc(issue.title)}</a>
+      <div class="kc-top">
+        <a href="${esc(issue.html_url)}" target="_blank" rel="noopener">#${issue.number} ${esc(issue.title)}</a>
+        ${assignees.length ? `<div class="mini-avatars">${assignees.slice(0, 3).map((a) => `<img class="mini-avatar" src="${esc(a.avatar_url)}" alt="${esc(a.login)}" title="Assigned to @${esc(a.login)} on GitHub">`).join('')}</div>` : ''}
+      </div>
       <div class="labels">${(issue.labels || []).map((l) => {
         const name = typeof l === 'string' ? l : l.name;
         const color = typeof l === 'string' ? 'EAE1D2' : (l.color || 'EAE1D2');
@@ -386,6 +405,7 @@ export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
             <div class="person-row" data-id="${esc(p.id)}">
               ${avatar(p, 28)}
               <span class="name">${esc(p.name)}</span>
+              <input type="text" class="github-username-input" placeholder="github username" value="${esc(p.githubUsername || '')}" title="Their real GitHub username — used for the avatar and to match assigned issues.">
               <div class="swatches">
                 ${PALETTE.map((c) => `<span class="swatch ${c === p.color ? 'selected' : ''}" data-color="${c}" style="background:${colorVar(c)}"></span>`).join('')}
               </div>
@@ -393,16 +413,18 @@ export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
             </div>`).join('')}
         </div>
         <div class="field-row">
-          <input type="text" id="new-person-name" placeholder="Add a person…">
+          <input type="text" id="new-person-name" placeholder="Name">
+          <input type="text" id="new-person-github" placeholder="GitHub username">
           <button class="btn btn-primary btn-small" id="add-person-btn">Add</button>
         </div>
-        <p class="settings-note">Each person automatically gets their own tab in the top navigation.</p>
+        <p class="settings-note">Each person automatically gets their own tab. Add their real GitHub username to pull in their actual avatar and highlight issues assigned to them on GitHub.</p>
       </div>
 
       <div class="settings-card">
         <h3>Data connection</h3>
-        <p class="settings-note">Projects &amp; people live in <b>${esc(conn?.owner)}/${esc(conn?.repo)}</b> at <code>${esc(conn?.path)}</code> (branch <code>${esc(conn?.branch)}</code>). The token is stored only in this browser.</p>
-        <div class="field-row"><input type="password" id="token-input" placeholder="Update GitHub token" value=""></div>
+        <p class="settings-note">Projects &amp; people live in <b>${esc(conn?.owner)}/${esc(conn?.repo)}</b> at <code>${esc(conn?.path)}</code> (branch <code>${esc(conn?.branch)}</code>).</p>
+        <p class="settings-note">This token is shared by the whole team — one token, used on every device, with access to every project repo (not just the data repo). Whoever manages the GitHub org should generate it; everyone pastes the <em>same</em> token when connecting.</p>
+        <div class="field-row"><input type="password" id="token-input" placeholder="Update shared GitHub token" value=""></div>
         <button class="btn btn-small" id="save-token-btn">Save token</button>
         <button class="btn btn-small btn-danger" id="disconnect-btn" style="margin-left:8px;">Disconnect this device</button>
       </div>
@@ -417,14 +439,25 @@ export function renderSettings(el, { onPeopleChanged, onDisconnect }) {
   `;
 
   el.querySelector('#add-person-btn').addEventListener('click', async () => {
-    const input = el.querySelector('#new-person-name');
-    const name = input.value.trim();
+    const nameInput = el.querySelector('#new-person-name');
+    const githubInput = el.querySelector('#new-person-github');
+    const name = nameInput.value.trim();
     if (!name) return;
     const usedColors = new Set(people.map((p) => p.color));
     const color = PALETTE.find((c) => !usedColors.has(c)) || PALETTE[people.length % PALETTE.length];
-    store.data.people.push({ id: store.nextId('person'), name, color });
-    input.value = '';
+    store.data.people.push({ id: store.nextId('person'), name, githubUsername: githubInput.value.trim().replace(/^@/, ''), color });
+    nameInput.value = '';
+    githubInput.value = '';
     await onPeopleChanged();
+  });
+
+  el.querySelectorAll('.github-username-input').forEach((input) => {
+    input.addEventListener('change', async (e) => {
+      const id = e.target.closest('.person-row').dataset.id;
+      const person = store.getPerson(id);
+      person.githubUsername = e.target.value.trim().replace(/^@/, '');
+      await onPeopleChanged();
+    });
   });
 
   el.querySelectorAll('.remove-person').forEach((btn) => {

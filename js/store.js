@@ -63,8 +63,8 @@ function defaultData() {
     version: 1,
     passwordHash: null, // set on first run
     people: [
-      { id: 'zul', name: 'Zul', color: 'p1' },
-      { id: 'marc', name: 'Marc', color: 'p2' },
+      { id: 'zul', name: 'Zul', githubUsername: '', color: 'p1' },
+      { id: 'marc', name: 'Marc', githubUsername: '', color: 'p2' },
     ],
     projects: [],
   };
