@@ -33,13 +33,26 @@ export async function onRequestGet({ request, env }) {
     const owner = url.searchParams.get('owner') || '';
     if (!/^[\w.-]+$/.test(owner)) return json({ error: 'Invalid owner' }, { status: 400 });
 
-    // try as an org first, fall back to a user account
-    let ghRes = await fetch(`https://api.github.com/orgs/${owner}/repos?per_page=100&sort=updated`, { headers: ghHeaders(ghToken) });
+    // Org repos endpoint DOES include private repos the token can see.
+    let ghRes = await fetch(`https://api.github.com/orgs/${owner}/repos?per_page=100&sort=updated&type=all`, { headers: ghHeaders(ghToken) });
+    let data = null;
+
     if (ghRes.status === 404) {
-      ghRes = await fetch(`https://api.github.com/users/${owner}/repos?per_page=100&sort=updated`, { headers: ghHeaders(ghToken) });
+      // Not an org (or token can't see it as one) — `/users/{name}/repos` only
+      // ever returns PUBLIC repos, no matter the token, so private repos owned
+      // by a personal account have to come from the authenticated `/user/repos`
+      // list instead, filtered down to that owner.
+      ghRes = await fetch(
+        'https://api.github.com/user/repos?per_page=100&sort=updated&visibility=all&affiliation=owner,collaborator,organization_member',
+        { headers: ghHeaders(ghToken) }
+      );
+      const all = await ghRes.json().catch(() => null);
+      if (!ghRes.ok) return json({ error: all?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
+      data = (all || []).filter((r) => r.owner?.login?.toLowerCase() === owner.toLowerCase());
+    } else {
+      data = await ghRes.json().catch(() => null);
+      if (!ghRes.ok) return json({ error: data?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
     }
-    const data = await ghRes.json().catch(() => null);
-    if (!ghRes.ok) return json({ error: data?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
 
     const repos = (data || []).map((r) => ({
       name: r.name,
