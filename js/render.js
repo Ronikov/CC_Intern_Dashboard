@@ -73,11 +73,65 @@ export function renderOverview(el) {
       <div class="stat-tile"><div class="num">${people.length}</div><div class="label">People</div></div>
     </div>
     ${renderTimeline(projects, people)}
-    <div class="section-head"><div><h2>Who's doing what</h2></div></div>
-    <div class="assign-grid">
-      ${people.map((person) => renderAssignCard(person, store.projectsFor(person.id))).join('') || `<p class="empty-state">No people yet — add some in Settings.</p>`}
+    <div class="section-head"><div><h2>Projects</h2><p class="sub">Who's on it, and what's next.</p></div></div>
+    <div class="project-grid">
+      ${projects.map((p) => renderOverviewProjectCard(p, people)).join('') || `<p class="empty-state">No projects yet — add one from the Projects tab.</p>`}
     </div>
   `;
+
+  el.querySelectorAll('.person-link').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      goToPersonProject(a.dataset.person, a.dataset.project);
+    });
+  });
+
+  projects.forEach((p) => {
+    const parsed = parseRepoUrl(p.repoUrl);
+    if (!parsed) return;
+    const slot = el.querySelector(`#ov-milestone-${cssEscape(p.id)}`);
+    if (!slot) return;
+    getRepoBundle(parsed)
+      .then((bundle) => { slot.innerHTML = renderMilestoneSummary(bundle.milestones); })
+      .catch(() => { slot.innerHTML = `<p class="settings-note">Couldn't load milestone.</p>`; });
+  });
+}
+
+function cssEscape(id) {
+  return String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function renderOverviewProjectCard(project, people) {
+  const owners = (project.assignees || []).map((id) => people.find((pe) => pe.id === id)).filter(Boolean);
+  const parsed = parseRepoUrl(project.repoUrl);
+  return `
+    <div class="project-card" style="border-left-color:${owners[0] ? colorVar(owners[0].color) : 'var(--accent)'}; cursor:default;">
+      <div class="top"><h3>${esc(project.name)}</h3>${statusBadge(project.status)}</div>
+      <div class="ov-members">
+        ${owners.length ? owners.map((o) => `
+          <a href="#" class="person-link" data-person="${esc(o.id)}" data-project="${esc(project.id)}">
+            ${avatar(o, 22)}<span>${esc(o.name)}</span>
+          </a>`).join('') : '<span class="badge">Unassigned</span>'}
+      </div>
+      <div class="ov-milestone" id="ov-milestone-${cssEscape(project.id)}">
+        ${parsed ? `<p class="loading-state" style="padding:4px 0;text-align:left;">Loading milestone…</p>` : `<p class="settings-note">Not linked to GitHub</p>`}
+      </div>
+    </div>`;
+}
+
+function renderMilestoneSummary(milestones) {
+  if (!milestones || !milestones.length) return `<p class="settings-note">No open milestones</p>`;
+  const m = milestones[0];
+  const total = m.open_issues + m.closed_issues;
+  const pct = total ? Math.round((m.closed_issues / total) * 100) : 0;
+  return `
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span style="font-size:12.5px;font-weight:600;">🏁 ${esc(m.title)}</span>
+        <span class="meta">${m.due_on ? new Date(m.due_on).toLocaleDateString() : 'no due date'}</span>
+      </div>
+      <div class="progress-bar"><div style="width:${pct}%;"></div></div>
+    </div>`;
 }
 
 function renderTimeline(projects, people) {
@@ -122,23 +176,19 @@ function renderTimeline(projects, people) {
     </div>`;
 }
 
-function renderAssignCard(person, projects) {
-  return `
-    <div class="assign-card">
-      <div class="head">${avatar(person, 36)}<span class="name">${esc(person.name)}</span></div>
-      <div class="body">
-        ${projects.length ? projects.map((p) => `
-          <div class="assign-proj">
-            <span>${esc(p.name)}</span>
-            ${statusBadge(p.status)}
-          </div>`).join('') : `<p class="empty-state" style="padding:14px 0;">No projects assigned</p>`}
-      </div>
-    </div>`;
+// Bridges Overview's "click a name" to the person tab's project detail view.
+// app.js listens for 'dashboard:navigate' and does the actual tab switch.
+export function goToPersonProject(personId, projectId) {
+  openDetailProjectId = projectId;
+  activeSubtab = 'kanban';
+  window.dispatchEvent(new CustomEvent('dashboard:navigate', { detail: { tab: `person:${personId}` } }));
 }
 
 /* ==================================================================== */
 /* PROJECTS TAB                                                          */
 /* ==================================================================== */
+
+let expandedProjectId = null;
 
 export function renderProjects(el) {
   const projects = store.getProjects();
@@ -146,7 +196,7 @@ export function renderProjects(el) {
 
   el.innerHTML = `
     <div class="section-head">
-      <div><h2>Projects</h2><p class="sub">Create a project and assign who's driving it.</p></div>
+      <div><h2>Projects</h2><p class="sub">Click a project for its combined view — Kanban, bugs, roadmap &amp; launch. Use ✎ to edit details.</p></div>
       <div style="display:flex;gap:8px;">
         <button class="btn" id="sync-github-btn">↻ Sync from GitHub</button>
         <button class="btn btn-primary" id="new-project-btn">+ New project</button>
@@ -155,13 +205,28 @@ export function renderProjects(el) {
     <div class="project-grid">
       ${projects.map((p) => renderProjectCard(p, people)).join('') || `<p class="empty-state">No projects yet. Click “New project” to add the first one, or “Sync from GitHub” to pull in existing repos.</p>`}
     </div>
+    <div id="project-overview-detail-slot"></div>
   `;
 
   el.querySelector('#new-project-btn').addEventListener('click', () => openProjectModal());
   el.querySelectorAll('.project-card').forEach((card) => {
-    card.addEventListener('click', () => openProjectModal(card.dataset.id));
+    card.addEventListener('click', () => {
+      const id = card.dataset.id;
+      expandedProjectId = expandedProjectId === id ? null : id;
+      renderProjects(el);
+    });
+  });
+  el.querySelectorAll('.edit-project-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openProjectModal(btn.dataset.id);
+    });
   });
   el.querySelector('#sync-github-btn').addEventListener('click', (e) => syncFromGithub(e.currentTarget));
+
+  if (expandedProjectId && projects.some((p) => p.id === expandedProjectId)) {
+    renderProjectDetail(el.querySelector('#project-overview-detail-slot'), store.getProject(expandedProjectId));
+  }
 }
 
 async function syncFromGithub(btn) {
@@ -194,9 +259,16 @@ async function syncFromGithub(btn) {
 function renderProjectCard(p, people) {
   const owners = (p.assignees || []).map((id) => people.find((pe) => pe.id === id)).filter(Boolean);
   const parsed = parseRepoUrl(p.repoUrl);
+  const active = p.id === expandedProjectId;
   return `
-    <div class="project-card" data-id="${esc(p.id)}" style="border-left-color:${owners[0] ? colorVar(owners[0].color) : 'var(--accent)'}">
-      <div class="top"><h3>${esc(p.name)}</h3>${statusBadge(p.status)}</div>
+    <div class="project-card ${active ? 'active' : ''}" data-id="${esc(p.id)}" style="border-left-color:${owners[0] ? colorVar(owners[0].color) : 'var(--accent)'}">
+      <div class="top">
+        <h3>${esc(p.name)}</h3>
+        <div style="display:flex;align-items:center;gap:6px;flex:none;">
+          ${statusBadge(p.status)}
+          <button class="btn btn-ghost btn-small edit-project-btn" data-id="${esc(p.id)}" title="Edit project details">✎</button>
+        </div>
+      </div>
       <p class="desc">${esc(p.description || 'No description yet.')}</p>
       <div class="meta">
         <div class="avatars">${owners.map((o) => avatar(o, 24)).join('') || '<span class="badge">Unassigned</span>'}</div>
@@ -228,6 +300,9 @@ export function renderPerson(el, personId) {
         <p class="sub">${projects.length} project${projects.length === 1 ? '' : 's'} assigned</p>
       </div>
     </div>
+    <div class="section-head"><div><h2 style="font-size:17px;">Timeline</h2><p class="sub">Gantt view of ${esc(person.name)}'s projects.</p></div></div>
+    ${renderTimeline(projects, store.getPeople())}
+    <div class="section-head"><div><h2 style="font-size:17px;">Boards</h2></div></div>
     <div class="board-grid">
       ${projects.map((p) => renderBoardCard(p)).join('') || `<p class="empty-state">No projects assigned to ${esc(person.name)} yet — assign one from the Projects tab.</p>`}
     </div>

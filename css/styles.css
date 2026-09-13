@@ -350,6 +350,7 @@ input,select,textarea{ font-family:inherit; }
   transition:transform .1s ease;
 }
 .project-card:hover{ transform:translateY(-2px); }
+.project-card.active{ outline:2px solid var(--accent); }
 .project-card .top{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
 .project-card h3{ font-family:'Baloo 2',sans-serif; font-weight:700; font-size:17px; }
 .project-card p.desc{ color:var(--ink-soft); font-size:12.5px; margin:8px 0 12px; line-height:1.5; min-height:2.6em; }
@@ -359,6 +360,20 @@ input,select,textarea{ font-family:inherit; }
 .project-card .avatars .avatar:first-child{ margin-left:0; }
 .project-card .repo-link{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--ink-faint); margin-top:10px; display:block; text-decoration:none; }
 .project-card .repo-link:hover{ color:var(--accent); }
+.edit-project-btn{ padding:3px 7px; font-size:12px; line-height:1; }
+
+/* overview project cards: members + milestone */
+.ov-members{ display:flex; flex-wrap:wrap; gap:6px 10px; margin:10px 0 12px; }
+.person-link{
+  display:inline-flex; align-items:center; gap:6px;
+  text-decoration:none; color:var(--ink);
+  font-size:12.5px; font-weight:600;
+  padding:3px 8px 3px 3px; border-radius:20px;
+  border:1px solid var(--border); background:var(--surface-2);
+}
+.person-link:hover{ border-color:var(--accent); color:var(--accent); }
+.person-link .avatar{ width:20px; height:20px; font-size:9px; }
+.ov-milestone{ border-top:1px solid var(--border); padding-top:10px; margin-top:2px; }
 
 /* ---------- person page ---------- */
 .person-header{

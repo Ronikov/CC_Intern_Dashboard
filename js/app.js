@@ -96,6 +96,14 @@ function enterApp() {
     renderPeopleTabs();
     renderActiveTab();
   });
+
+  // Fired when a click inside a page (e.g. a member's name on Overview)
+  // needs to switch tabs — render.js owns which project detail opens.
+  window.addEventListener('dashboard:navigate', (e) => {
+    activeTab = e.detail.tab;
+    location.hash = `#/${activeTab}`;
+    renderActiveTab();
+  });
 }
 
 function updateSyncStatus() {
