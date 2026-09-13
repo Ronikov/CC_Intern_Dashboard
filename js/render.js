@@ -120,8 +120,9 @@ function renderOverviewProjectCard(project, people) {
 }
 
 function renderMilestoneSummary(milestones) {
-  if (!milestones || !milestones.length) return `<p class="settings-note">No open milestones</p>`;
-  const m = milestones[0];
+  const open = (milestones || []).filter((m) => m.state === 'open');
+  if (!open.length) return `<p class="settings-note">No open milestones</p>`;
+  const m = open[0];
   const total = m.open_issues + m.closed_issues;
   const pct = total ? Math.round((m.closed_issues / total) * 100) : 0;
   return `
@@ -377,7 +378,7 @@ async function getRepoBundle(parsed) {
 
   const [issues, milestones, releases] = await Promise.all([
     fetchIssues(parsed, null, 'all').catch(() => []),
-    fetchMilestones(parsed, null, 'open').catch(() => []),
+    fetchMilestones(parsed, null, 'all').catch(() => []),
     fetchReleases(parsed).catch(() => []),
   ]);
   const bundle = { issues, milestones, releases, fetchedAt: Date.now() };
@@ -396,13 +397,17 @@ async function loadAndRenderSubtab(container, parsed, tab) {
   }
 
   if (tab === 'kanban') return renderKanban(container, bundle.issues);
-  if (tab === 'bugs') return renderBugs(container, bundle.issues);
-  if (tab === 'roadmap') return renderRoadmap(container, bundle.milestones, bundle.issues);
+  if (tab === 'bugs') return renderBugs(container, bundle.issues, store.getPeople());
+  if (tab === 'roadmap') return renderRoadmap(container, bundle.milestones);
   if (tab === 'launch') return renderLaunch(container, bundle.releases);
 }
 
 function issueLabelNames(issue) {
   return (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name).toLowerCase());
+}
+
+function issueAssignees(issue) {
+  return issue.assignees?.length ? issue.assignees : (issue.assignee ? [issue.assignee] : []);
 }
 
 function renderKanban(container, issues) {
@@ -427,7 +432,7 @@ function renderKanban(container, issues) {
 }
 
 function kanbanCard(issue) {
-  const assignees = issue.assignees?.length ? issue.assignees : (issue.assignee ? [issue.assignee] : []);
+  const assignees = issueAssignees(issue);
   return `
     <div class="kanban-card">
       <div class="kc-top">
@@ -442,41 +447,78 @@ function kanbanCard(issue) {
     </div>`;
 }
 
-function renderBugs(container, issues) {
-  const bugs = issues.filter((i) => issueLabelNames(i).includes('bug'));
+let bugFilterPersonId = 'all';
+
+function renderBugs(container, issues, people) {
+  const filterable = (people || []).filter((p) => p.githubUsername);
+  const allBugs = issues.filter((i) => issueLabelNames(i).includes('bug'));
+
+  const filterPerson = filterable.find((p) => p.id === bugFilterPersonId);
+  const bugs = filterPerson
+    ? allBugs.filter((b) => issueAssignees(b).some((a) => a.login?.toLowerCase() === filterPerson.githubUsername.toLowerCase()))
+    : allBugs;
+
   const open = bugs.filter((b) => b.state === 'open');
   const closed = bugs.filter((b) => b.state === 'closed');
+
   container.innerHTML = `
+    ${filterable.length ? `
+      <div class="checkbox-grid" style="margin-bottom:14px;">
+        <span class="check-pill ${bugFilterPersonId === 'all' ? 'on' : ''}" data-person="all">All</span>
+        ${filterable.map((p) => `<span class="check-pill ${bugFilterPersonId === p.id ? 'on' : ''}" data-person="${esc(p.id)}">${avatar(p, 16)}${esc(p.name)}</span>`).join('')}
+      </div>
+    ` : ''}
     <div class="stats-row" style="margin-bottom:16px;">
       <div class="stat-tile"><div class="num">${open.length}</div><div class="label">Open bugs</div></div>
       <div class="stat-tile"><div class="num">${closed.length}</div><div class="label">Closed bugs</div></div>
     </div>
-    ${bugs.length ? bugs.map((b) => `
+    ${bugs.length ? bugs.map((b) => {
+      const assignees = issueAssignees(b);
+      return `
       <div class="list-row">
         <a href="${esc(b.html_url)}" target="_blank" rel="noopener">#${b.number} ${esc(b.title)}</a>
-        <span class="badge" style="background:${b.state === 'open' ? 'var(--bad-soft)' : 'var(--good-soft)'};color:${b.state === 'open' ? 'var(--bad)' : 'var(--good)'};">${b.state}</span>
-      </div>`).join('') : `<p class="empty-state">No issues labeled “bug” in this repo.</p>`}
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${assignees.length ? `<div class="mini-avatars">${assignees.slice(0, 3).map((a) => `<img class="mini-avatar" src="${esc(a.avatar_url)}" alt="${esc(a.login)}" title="Assigned to @${esc(a.login)} on GitHub">`).join('')}</div>` : ''}
+          <span class="badge" style="background:${b.state === 'open' ? 'var(--bad-soft)' : 'var(--good-soft)'};color:${b.state === 'open' ? 'var(--bad)' : 'var(--good)'};">${b.state}</span>
+        </div>
+      </div>`;
+    }).join('') : `<p class="empty-state">No issues labeled “bug”${filterPerson ? ` assigned to ${esc(filterPerson.name)}` : ''} in this repo.</p>`}
   `;
+
+  container.querySelectorAll('.check-pill').forEach((pill) => {
+    pill.addEventListener('click', () => {
+      bugFilterPersonId = pill.dataset.person;
+      renderBugs(container, issues, people);
+    });
+  });
 }
 
-function renderRoadmap(container, milestones, issues) {
+function milestoneRow(m) {
+  const total = m.open_issues + m.closed_issues;
+  const pct = total ? Math.round((m.closed_issues / total) * 100) : 0;
+  return `
+    <div class="list-row" style="display:block;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <a href="${esc(m.html_url)}" target="_blank" rel="noopener">${esc(m.title)}</a>
+        <span class="badge" style="background:${m.state === 'open' ? 'var(--accent-soft)' : 'var(--good-soft)'};color:${m.state === 'open' ? 'var(--accent)' : 'var(--good)'};flex:none;">${esc(m.state)}</span>
+        <span class="meta" style="margin-left:auto;">${m.due_on ? new Date(m.due_on).toLocaleDateString() : 'no due date'}</span>
+      </div>
+      <div class="progress-bar"><div style="width:${pct}%;"></div></div>
+      <span class="meta">${m.closed_issues}/${total} issues closed</span>
+    </div>`;
+}
+
+function renderRoadmap(container, milestones) {
   if (!milestones.length) {
-    container.innerHTML = `<p class="empty-state">No open milestones — create some on GitHub to power the roadmap.</p>`;
+    container.innerHTML = `<p class="empty-state">No milestones — create some on GitHub to power the roadmap.</p>`;
     return;
   }
-  container.innerHTML = milestones.map((m) => {
-    const total = m.open_issues + m.closed_issues;
-    const pct = total ? Math.round((m.closed_issues / total) * 100) : 0;
-    return `
-      <div class="list-row" style="display:block;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <a href="${esc(m.html_url)}" target="_blank" rel="noopener">${esc(m.title)}</a>
-          <span class="meta">${m.due_on ? new Date(m.due_on).toLocaleDateString() : 'no due date'}</span>
-        </div>
-        <div class="progress-bar"><div style="width:${pct}%;"></div></div>
-        <span class="meta">${m.closed_issues}/${total} issues closed</span>
-      </div>`;
-  }).join('');
+  const open = milestones.filter((m) => m.state === 'open');
+  const closed = milestones.filter((m) => m.state === 'closed');
+  container.innerHTML = `
+    ${open.length ? `<h4 style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--ink-soft);margin:0 0 6px;">Open · ${open.length}</h4>${open.map(milestoneRow).join('')}` : ''}
+    ${closed.length ? `<h4 style="font-family:'IBM Plex Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--ink-soft);margin:18px 0 6px;">Closed · ${closed.length}</h4>${closed.map(milestoneRow).join('')}` : ''}
+  `;
 }
 
 function renderLaunch(container, releases) {

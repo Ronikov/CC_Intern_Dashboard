@@ -66,7 +66,7 @@ export async function onRequestGet({ request, env }) {
 
   let path;
   if (type === 'issues') path = `issues?state=${encodeURIComponent(state)}&per_page=100`;
-  if (type === 'milestones') path = `milestones?state=${encodeURIComponent(state === 'all' ? 'open' : state)}&per_page=100&sort=due_on&direction=asc`;
+  if (type === 'milestones') path = `milestones?state=${encodeURIComponent(state)}&per_page=100&sort=due_on&direction=asc`;
   if (type === 'releases') path = `releases?per_page=20`;
 
   const ghRes = await fetch(`https://api.github.com/repos/${repo}/${path}`, { headers: ghHeaders(ghToken) });
