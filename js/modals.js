@@ -117,7 +117,7 @@ function humanize(repoName) {
 }
 
 // repos: [{ name, fullName, htmlUrl, description, updatedAt, archived }]
-export function openImportReposModal(repos, org) {
+export function openImportReposModal(repos) {
   const root = document.getElementById('modal-root');
   const selected = new Set(repos.map((r) => r.htmlUrl));
 
@@ -125,11 +125,11 @@ export function openImportReposModal(repos, org) {
     <div class="modal-backdrop" id="modal-backdrop">
       <div class="modal">
         <h2>Import from GitHub</h2>
-        <p class="settings-note">Found ${repos.length} repo${repos.length === 1 ? '' : 's'} under <b>${esc(org)}</b> not yet tracked as a project. Pick which to add:</p>
+        <p class="settings-note">Found ${repos.length} repo${repos.length === 1 ? '' : 's'} the token can see that aren't tracked as a project yet. Pick which to add:</p>
         <div style="display:flex; flex-direction:column; gap:8px; margin-top:12px; max-height:40vh; overflow-y:auto;">
           ${repos.map((r) => `
             <label class="check-pill on" style="justify-content:space-between; width:100%; cursor:pointer;" data-url="${esc(r.htmlUrl)}">
-              <span><b>${esc(r.name)}</b>${r.description ? ` — ${esc(r.description)}` : ''}</span>
+              <span><b>${esc(r.fullName)}</b>${r.private ? ' 🔒' : ''}${r.description ? ` — ${esc(r.description)}` : ''}</span>
               <input type="checkbox" class="repo-checkbox" checked data-url="${esc(r.htmlUrl)}">
             </label>`).join('')}
         </div>

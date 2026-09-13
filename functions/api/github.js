@@ -1,5 +1,10 @@
 // GET /api/github?repo=owner/name&type=issues|milestones|releases&state=open|closed|all
-// GET /api/github?type=repos&owner=name
+// GET /api/github?type=repos
+//   Lists every repo the token can see: owned, org-member, and repos you're
+//   just a collaborator on. Note: a fine-grained PAT can only reach repos
+//   owned by its own "resource owner" account/org — to see a repo you
+//   collaborate on under someone else's personal account, the token needs
+//   to be a classic PAT (repo scope) instead.
 // Proxies GitHub's REST API using a server-side token (set from Settings,
 // stored in D1 — see /api/github-token — or a GITHUB_TOKEN Wrangler secret
 // as a fallback), so no GitHub credential ever needs to reach a browser.
@@ -30,31 +35,20 @@ export async function onRequestGet({ request, env }) {
   if (!ghToken) return json({ error: 'No GitHub token configured yet — add one in Settings.' }, { status: 500 });
 
   if (type === 'repos') {
-    const owner = url.searchParams.get('owner') || '';
-    if (!/^[\w.-]+$/.test(owner)) return json({ error: 'Invalid owner' }, { status: 400 });
-
-    // Org repos endpoint DOES include private repos the token can see.
-    let ghRes = await fetch(`https://api.github.com/orgs/${owner}/repos?per_page=100&sort=updated&type=all`, { headers: ghHeaders(ghToken) });
-    let data = null;
-
-    if (ghRes.status === 404) {
-      // Not an org (or token can't see it as one) — `/users/{name}/repos` only
-      // ever returns PUBLIC repos, no matter the token, so private repos owned
-      // by a personal account have to come from the authenticated `/user/repos`
-      // list instead, filtered down to that owner.
-      ghRes = await fetch(
-        'https://api.github.com/user/repos?per_page=100&sort=updated&visibility=all&affiliation=owner,collaborator,organization_member',
+    // Paginate through everything the token can see (owned + org + collaborator).
+    const all = [];
+    for (let page = 1; page <= 5; page++) {
+      const ghRes = await fetch(
+        `https://api.github.com/user/repos?per_page=100&page=${page}&sort=updated&visibility=all&affiliation=owner,collaborator,organization_member`,
         { headers: ghHeaders(ghToken) }
       );
-      const all = await ghRes.json().catch(() => null);
-      if (!ghRes.ok) return json({ error: all?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
-      data = (all || []).filter((r) => r.owner?.login?.toLowerCase() === owner.toLowerCase());
-    } else {
-      data = await ghRes.json().catch(() => null);
-      if (!ghRes.ok) return json({ error: data?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
+      const batch = await ghRes.json().catch(() => null);
+      if (!ghRes.ok) return json({ error: batch?.message || `GitHub API error (${ghRes.status})` }, { status: ghRes.status });
+      all.push(...(batch || []));
+      if (!batch || batch.length < 100) break; // last page
     }
 
-    const repos = (data || []).map((r) => ({
+    const repos = all.map((r) => ({
       name: r.name,
       fullName: r.full_name,
       htmlUrl: r.html_url,

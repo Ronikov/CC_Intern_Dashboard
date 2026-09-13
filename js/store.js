@@ -70,16 +70,6 @@ export async function setGithubToken(token) {
   return apiFetch('/api/github-token', { method: 'PUT', body: JSON.stringify({ token }) });
 }
 
-export async function getGithubOrg() {
-  const data = await apiFetch('/api/org');
-  return data.githubOrg;
-}
-
-export async function setGithubOrg(githubOrg) {
-  const data = await apiFetch('/api/org', { method: 'PUT', body: JSON.stringify({ githubOrg }) });
-  return data.githubOrg;
-}
-
 /* ---------------- central store ---------------- */
 
 class Store {

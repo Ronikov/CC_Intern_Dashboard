@@ -40,9 +40,10 @@ export function fetchReleases(parsed) {
   return proxyFetch(parsed, 'releases');
 }
 
-export async function fetchOrgRepos(owner) {
-  const params = new URLSearchParams({ type: 'repos', owner });
-  const res = await fetch(`/api/github?${params.toString()}`, {
+// Every repo the shared token can see: owned, org-member, and repos you're
+// just a collaborator on.
+export async function fetchAllRepos() {
+  const res = await fetch('/api/github?type=repos', {
     headers: { Authorization: `Bearer ${getToken()}` },
   });
   const data = await res.json();

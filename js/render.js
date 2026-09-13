@@ -2,8 +2,8 @@
 // delegation; no framework, no build step, so this deploys as-is to
 // Cloudflare Pages.
 
-import { store, colorVar, PALETTE, updatePassword, getGithubOrg, setGithubOrg, getGithubTokenStatus, setGithubToken } from './store.js';
-import { parseRepoUrl, fetchIssues, fetchMilestones, fetchReleases, fetchOrgRepos } from './github.js';
+import { store, colorVar, PALETTE, updatePassword, getGithubTokenStatus, setGithubToken } from './store.js';
+import { parseRepoUrl, fetchIssues, fetchMilestones, fetchReleases, fetchAllRepos } from './github.js';
 import { openProjectModal, openImportReposModal } from './modals.js';
 
 const repoCache = new Map(); // "owner/repo" -> { issues, milestones, releases, fetchedAt }
@@ -169,15 +169,7 @@ async function syncFromGithub(btn) {
   btn.disabled = true;
   btn.textContent = 'Syncing…';
   try {
-    let org = await getGithubOrg();
-    if (!org) {
-      const typed = prompt('Which GitHub org or username should we scan for repos? (You can change this later in Settings.)');
-      if (!typed || !typed.trim()) return;
-      org = typed.trim();
-      await setGithubOrg(org);
-    }
-
-    const repos = await fetchOrgRepos(org);
+    const repos = await fetchAllRepos();
     const existing = new Set(
       store.getProjects()
         .map((p) => parseRepoUrl(p.repoUrl))
@@ -187,10 +179,10 @@ async function syncFromGithub(btn) {
     const newRepos = repos.filter((r) => !r.archived && !existing.has(r.fullName.toLowerCase()));
 
     if (!newRepos.length) {
-      alert(`No new repos found under "${org}" — everything's already tracked (or archived).`);
+      alert(`No new repos found — everything the token can see is already tracked (or archived).`);
       return;
     }
-    openImportReposModal(newRepos, org);
+    openImportReposModal(newRepos);
   } catch (err) {
     alert(`Couldn't sync from GitHub: ${err.message}`);
   } finally {
@@ -466,14 +458,7 @@ export function renderSettings(el, { onPeopleChanged }) {
           <input type="password" id="github-token-input" placeholder="github_pat_… or ghp_…">
           <button class="btn btn-small" id="save-token-btn">Save</button>
         </div>
-        <p class="settings-note">Fine-grained PAT with <b>Contents: Read</b> access to every project repo. Stored in the database, never sent to any browser after this.</p>
-
-        <label style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink-soft);margin:18px 0 6px;">GitHub org/username to sync repos from</label>
-        <div class="field-row">
-          <input type="text" id="github-org-input" placeholder="loading…">
-          <button class="btn btn-small" id="save-org-btn">Save</button>
-        </div>
-        <p class="settings-note">Used by the “↻ Sync from GitHub” button on the Projects tab to find repos that aren't tracked yet.</p>
+        <p class="settings-note">Needs <b>Contents: Read</b> access to every project repo. Stored in the database, never sent to any browser after this. “↻ Sync from GitHub” (Projects tab) lists everything this token can see — owned repos, org repos, and repos you're just a collaborator on. Note: a <b>fine-grained</b> token can only reach repos owned by its own account/org — to pull in a repo you collaborate on under someone else's personal account, use a <b>classic</b> token (repo scope) instead.</p>
       </div>
 
       <div class="settings-card">
@@ -541,17 +526,6 @@ export function renderSettings(el, { onPeopleChanged }) {
       alert('GitHub token saved.');
     } catch (e) {
       alert(`Couldn't save token: ${e.message}`);
-    }
-  });
-
-  const orgInput = el.querySelector('#github-org-input');
-  getGithubOrg().then((org) => { orgInput.value = org || ''; orgInput.placeholder = 'e.g. zulmarc'; }).catch(() => { orgInput.placeholder = 'e.g. zulmarc'; });
-  el.querySelector('#save-org-btn').addEventListener('click', async () => {
-    try {
-      await setGithubOrg(orgInput.value.trim());
-      alert('Saved.');
-    } catch (e) {
-      alert(`Couldn't save: ${e.message}`);
     }
   });
 
